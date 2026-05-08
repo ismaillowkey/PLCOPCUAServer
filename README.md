@@ -1,4 +1,4 @@
-# Project ATLAS - Industrial OPC UA Server
+# Industrial OPC UA Server
 
 Sistem monitoring industrial berbasis .NET Worker Service yang mengintegrasikan data dari database ke dalam *address space* OPC UA. Proyek ini menggunakan arsitektur *decoupled* yang dibagi menjadi tiga tahap utama (Step 1, 2, dan 3) untuk memastikan integritas data dan performa tinggi.
 
