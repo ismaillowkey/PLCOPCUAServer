@@ -9,7 +9,7 @@ public class Step3_OPCUAServerWorker : BackgroundService
     private CustomServer _server;
     private GenericNodeManager _nodeManager;
     private readonly ILogger<Step3_OPCUAServerWorker> _logger;
-    private readonly int Port = 4480;
+    private readonly int Port = 4840;
 
     public Step3_OPCUAServerWorker(ILogger<Step3_OPCUAServerWorker> logger)
     {
@@ -53,6 +53,8 @@ public class Step3_OPCUAServerWorker : BackgroundService
     {
         Console.WriteLine("3b. Inisialisasi konfigurasi OPC UA Server...");
 
+        string hostName = System.Net.Dns.GetHostName();
+
         var config = new ApplicationConfiguration()
         {
             ApplicationName = "IndustrialOpcServer",
@@ -76,7 +78,7 @@ public class Step3_OPCUAServerWorker : BackgroundService
             },
             ServerConfiguration = new ServerConfiguration()
             {
-                BaseAddresses = { $"opc.tcp://0.0.0.0:{Port}" },
+                BaseAddresses = { $"opc.tcp://{hostName}:{Port}" },
                 SecurityPolicies = { new ServerSecurityPolicy { SecurityMode = MessageSecurityMode.None, SecurityPolicyUri = SecurityPolicies.None } },
                 UserTokenPolicies = { new UserTokenPolicy(UserTokenType.Anonymous) },
                 MaxSessionCount = 100,

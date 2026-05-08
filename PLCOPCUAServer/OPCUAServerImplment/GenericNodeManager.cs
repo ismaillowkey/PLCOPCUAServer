@@ -8,8 +8,9 @@ namespace PLCOPCUAServer.WorkerServices;
 
 public class GenericNodeManager : CustomNodeManager2
 {
-    private readonly Dictionary<int, BaseDataVariableState> _nodeLookup = new();
-    private readonly Dictionary<int, BaseDataVariableState> _connectionNodes = new();
+    // KUNCINYA: Pake string (NodeId) biar gak tabrakan antar mesin
+    private readonly Dictionary<string, BaseDataVariableState> _nodeLookup = new();
+    private readonly Dictionary<string, BaseDataVariableState> _connectionNodes = new();
     private const string NamespaceUri = "http://ismail-automation.com/UA/IndustrialServer";
 
     public GenericNodeManager(IServerInternal s, ApplicationConfiguration c)
@@ -22,7 +23,6 @@ public class GenericNodeManager : CustomNodeManager2
         lock (Lock)
         {
             base.CreateAddressSpace(externalReferences);
-
             ushort nsIdx = (ushort)Server.NamespaceUris.GetIndexOrAppend(NamespaceUri);
 
             if (!externalReferences.TryGetValue(ObjectIds.ObjectsFolder, out IList<IReference> objRefs))
@@ -30,7 +30,6 @@ public class GenericNodeManager : CustomNodeManager2
                 externalReferences[ObjectIds.ObjectsFolder] = objRefs = new List<IReference>();
             }
 
-            // LANGSUNG PAKE DATA YANG UDAH ADA DI GLOBAL DATA
             foreach (var machine in GlobalData.MachineStates)
             {
                 int dcId = machine.Key;
@@ -54,9 +53,7 @@ public class GenericNodeManager : CustomNodeManager2
                 objRefs.Add(new NodeStateReference(ReferenceTypeIds.Organizes, false, folder.NodeId));
                 AddPredefinedNode(SystemContext, folder);
 
-                // ==========================================
-                // 2. SUNTIK TAG "_isConnected" OTOMATIS
-                // ==========================================
+                // 2. _isConnected (Pake NodeId string biar unik per mesin)
                 var isConnectedVar = new BaseDataVariableState(folder)
                 {
                     SymbolicName = "_isConnected",
@@ -75,11 +72,11 @@ public class GenericNodeManager : CustomNodeManager2
 
                 folder.AddChild(isConnectedVar);
                 AddPredefinedNode(SystemContext, isConnectedVar);
-                _connectionNodes[dcId] = isConnectedVar;
 
-                // ==========================================
-                // 3. CREATE TAG BERDASARKAN ISI MACHINE STATES
-                // ==========================================
+                // SIMPEN PAKE NODE ID STRING
+                _connectionNodes[isConnectedVar.NodeId.ToString()] = isConnectedVar;
+
+                // 3. Create Tags
                 foreach (var tag in tags)
                 {
                     var v = new BaseDataVariableState(folder)
@@ -101,8 +98,8 @@ public class GenericNodeManager : CustomNodeManager2
                     folder.AddChild(v);
                     AddPredefinedNode(SystemContext, v);
 
-                    // Mapping ID biar SyncValues tinggal sat-set
-                    _nodeLookup[tag.AddressId] = v;
+                    // MAPPING PAKE NODE ID STRING (BIAR GAK KETUKER SAMA MESIN LAIN)
+                    _nodeLookup[v.NodeId.ToString()] = v;
                 }
             }
         }
@@ -112,44 +109,64 @@ public class GenericNodeManager : CustomNodeManager2
     {
         lock (Lock)
         {
+            ushort nsIdx = (ushort)Server.NamespaceUris.GetIndexOrAppend(NamespaceUri);
+
             foreach (var machine in GlobalData.MachineStates)
             {
                 int dcId = machine.Key;
                 var tagList = machine.Value;
+                string gName = $"Line{tagList.FirstOrDefault()?.LineNo}_DC{dcId}";
 
-                // A. Update Nilai Tag PLC & Timestamp dari Step 2
+                // A. Update Tag PLC
                 foreach (var dto in tagList)
                 {
-                    if (_nodeLookup.TryGetValue(dto.AddressId, out var n))
+                    // Cari pake key yang sama persis pas Create
+                    string nodeIdKey = new NodeId($"{gName}.{dto.TagName}", nsIdx).ToString();
+
+                    if (_nodeLookup.TryGetValue(nodeIdKey, out var n))
                     {
-                        // Kita bandingkan value atau timestamp-nya
-                        // Kalau timestamp-nya baru, berarti ada pembacaan baru
-                        if (!Object.Equals(n.Value, dto.Value) || n.Timestamp != dto.TimestampRead)
+                        var typedValue = CastToOpcType(dto.Value, dto.DataTypeId);
+
+                        if (!Object.Equals(n.Value, typedValue) || n.Timestamp != dto.TimestampRead)
                         {
-                            n.Value = dto.Value;
-
-                            // AMBIL DARI PROPERTY BARU LU
+                            n.Value = typedValue;
                             n.Timestamp = dto.TimestampRead;
-
                             n.ClearChangeMasks(SystemContext, false);
                         }
                     }
                 }
 
-                // B. Update Tag _isConnected
-                if (_connectionNodes.TryGetValue(dcId, out var connNode))
+                // B. Update _isConnected
+                string connNodeIdKey = new NodeId($"{gName}._isConnected", nsIdx).ToString();
+                if (_connectionNodes.TryGetValue(connNodeIdKey, out var connNode))
                 {
                     bool statusKonek = GlobalData.PlcFirstConnectFlags.TryGetValue(dcId, out var flag) && flag;
 
                     if (!Object.Equals(connNode.Value, statusKonek))
                     {
                         connNode.Value = statusKonek;
-                        connNode.Timestamp = DateTime.UtcNow; // Untuk status koneksi pake waktu server gak apa-apa
+                        connNode.Timestamp = DateTime.UtcNow;
                         connNode.ClearChangeMasks(SystemContext, false);
                     }
                 }
             }
         }
+    }
+
+    private object CastToOpcType(object value, int dataTypeId)
+    {
+        if (value == null) return GetDefaultValue(dataTypeId);
+        var type = (PlcDataType)dataTypeId;
+        return type switch
+        {
+            PlcDataType.Int16 => Convert.ToInt16(value),
+            PlcDataType.UInt16 => Convert.ToUInt16(value),
+            PlcDataType.Int32 => Convert.ToInt32(value),
+            PlcDataType.UInt32 => Convert.ToUInt32(value),
+            PlcDataType.Float32 => Convert.ToSingle(value),
+            PlcDataType.Boolean => Convert.ToBoolean(value),
+            _ => value
+        };
     }
 
     private NodeId GetDataTypeId(int dataTypeId)
@@ -164,7 +181,7 @@ public class GenericNodeManager : CustomNodeManager2
             PlcDataType.UInt32 => DataTypeIds.UInt32,
             PlcDataType.Int64 => DataTypeIds.Int64,
             PlcDataType.UInt64 => DataTypeIds.UInt64,
-            PlcDataType.Float32 or PlcDataType.Float32 => DataTypeIds.Float,
+            PlcDataType.Float32 => DataTypeIds.Float,
             PlcDataType.String => DataTypeIds.String,
             _ => DataTypeIds.Double
         };
@@ -182,7 +199,7 @@ public class GenericNodeManager : CustomNodeManager2
             PlcDataType.UInt32 => (uint)0,
             PlcDataType.Int64 => (long)0,
             PlcDataType.UInt64 => (ulong)0,
-            PlcDataType.Float32 or PlcDataType.Float32 => 0.0f,
+            PlcDataType.Float32 => 0.0f,
             PlcDataType.String => "",
             _ => 0.0
         };
