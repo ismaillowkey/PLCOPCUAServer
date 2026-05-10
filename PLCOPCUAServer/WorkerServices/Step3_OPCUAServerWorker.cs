@@ -48,19 +48,20 @@ public class Step3_OPCUAServerWorker : BackgroundService
         }
     }
 
-    // --- FUNGSI BARU: URUSAN TEKNIS CONFIG & START ---
     private async Task StartOpcUaServerAsync(CancellationToken stoppingToken)
     {
         Console.WriteLine("3b. Inisialisasi konfigurasi OPC UA Server...");
 
-        string hostName = System.Net.Dns.GetHostName();
+        string hostName = System.Net.Dns.GetHostName().ToLower(); // Paksa lowercase biar konsisten
+        string myAppName = "SASOpcServer";
 
         var config = new ApplicationConfiguration()
         {
-            ApplicationName = "IndustrialOpcServer",
+            ApplicationName = myAppName,
             ApplicationType = ApplicationType.Server,
-            ApplicationUri = "urn:localhost:IndustrialOpcServer",
-            ProductUri = "uri:ismail-automation.com:IndustrialOpcServer",
+            // KUNCINYA: Jangan pake localhost, pake hostname asli
+            ApplicationUri = $"urn:{hostName}:{myAppName}",
+            ProductUri = $"uri:vmtech-sas-tangerang.com:{myAppName}",
             TransportQuotas = new TransportQuotas { OperationTimeout = 15000 },
             SecurityConfiguration = new SecurityConfiguration
             {
@@ -68,7 +69,7 @@ public class Step3_OPCUAServerWorker : BackgroundService
                 {
                     StoreType = "Directory",
                     StorePath = "OPC Foundation/CertificateStore/MachineDefault",
-                    SubjectName = "CN=IndustrialOpcServer"
+                    SubjectName = $"CN={myAppName}, DC={hostName}"
                 },
                 TrustedIssuerCertificates = new CertificateTrustList { StoreType = "Directory", StorePath = "OPC Foundation/CertificateStore/Issuer" },
                 TrustedPeerCertificates = new CertificateTrustList { StoreType = "Directory", StorePath = "OPC Foundation/CertificateStore/TrustedPeer" },
@@ -84,34 +85,35 @@ public class Step3_OPCUAServerWorker : BackgroundService
                 MaxSessionCount = 100,
                 MinSessionTimeout = 10000,
                 MaxSessionTimeout = 3600000,
-                MaxBrowseContinuationPoints = 10,
-                MaxQueryContinuationPoints = 10,
-                MaxHistoryContinuationPoints = 100,
-                MaxRequestAge = 600000,
-                MinRequestThreadCount = 5,
-                MaxRequestThreadCount = 100,
-                MaxQueuedRequestCount = 200
             }
         };
 
+        // 1. Validasi Konfigurasi
         await config.ValidateAsync(ApplicationType.Server);
 
-        var application = new ApplicationInstance((ITelemetryContext)null)
+        // 2. Inisialisasi Application Instance
+        var application = new ApplicationInstance
         {
-            ApplicationName = "IndustrialOpcServer",
+            ApplicationName = myAppName,
             ApplicationType = ApplicationType.Server,
             ApplicationConfiguration = config
         };
 
-        bool hasCertificate = await application.CheckApplicationInstanceCertificatesAsync(false, 2048);
+        // 3. Check & Create Certificate (WAJIB SILENT = TRUE)
+        // Kalau silent = false, dia bakal nyoba buka jendela dialog dan error di Background Service
+        bool hasCertificate = await application.CheckApplicationInstanceCertificatesAsync(true, 2048);
+
         if (!hasCertificate)
         {
-            _logger.LogWarning("Sertifikat baru dibuat.");
+            _logger.LogError("Gagal memvalidasi atau membuat sertifikat OPC UA!");
+            throw new Exception("Sertifikat aplikasi tidak valid atau tidak bisa dibuat.");
         }
 
-        // Inisialisasi CustomServer
         _server = new CustomServer(m => _nodeManager = m);
-        Console.WriteLine($"3c. OPC UA has Started at port: {Port}");
+
+        // Start Server
         await application.StartAsync(_server);
+
+        Console.WriteLine($"3c. OPC UA has Started at: opc.tcp://{hostName}:{Port}");
     }
 }

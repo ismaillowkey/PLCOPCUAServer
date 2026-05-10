@@ -31,7 +31,7 @@ namespace PLCOPCUAServer.Shared
 
         // Status FirstConnect, jika true semua maka opc ua server akan run
         // Key: DcNo, Value: bool (True kalo udah FirstConnect)
-        public static ConcurrentDictionary<int, bool> PlcFirstConnectFlags = new();
+        public static ConcurrentDictionary<int, bool> PlcFirstConnectFlags { get; set; } = new();
 
         public static bool Step1_AfterReadMasterTag { get; set; }
         // get PlcFirstConnectFlags, return true jika semua true
